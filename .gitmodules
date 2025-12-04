@@ -1,0 +1,6 @@
+[submodule "third_party/SteadyDancer"]
+	path = third_party/SteadyDancer
+	url = https://github.com/MCG-NJU/SteadyDancer
+[submodule "third_party/DFloat11"]
+	path = third_party/DFloat11
+	url = https://github.com/LeanModels/DFloat11

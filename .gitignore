@@ -1,0 +1,35 @@
+# Python venv (managed by uv)
+.venv/
+
+# Bytecode / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Node / frontend
+node_modules/
+dist/
+.next/
+coverage/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local env files
+.env
+*.env.local
+*.env.development
+*.env.production
+*.env.test
+
+# Models directory (keep README)
+models/
+!models/README.md
+
+# UV / tooling
+.python-version
+

@@ -1,0 +1,15 @@
+{
+  "name": "steadydancer-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "libs/ts_ui"
+  ],
+  "scripts": {
+    "web:dev": "npm run dev --workspace @steadydancer/web",
+    "web:build": "npm run build --workspace @steadydancer/web",
+    "web:preview": "npm run preview --workspace @steadydancer/web"
+  }
+}
+
