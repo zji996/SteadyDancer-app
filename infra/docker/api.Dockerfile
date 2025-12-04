@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS base
+FROM python:3.13-slim AS base
 
 WORKDIR /app
 
@@ -15,4 +15,3 @@ COPY . /app
 ENV MODELS_DIR=/models
 
 CMD ["uv", "run", "--project", "apps/api", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-

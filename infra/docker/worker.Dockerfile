@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS base
+FROM python:3.13-slim AS base
 
 WORKDIR /app
 
@@ -15,4 +15,3 @@ COPY . /app
 ENV MODELS_DIR=/models
 
 CMD ["uv", "run", "--project", "apps/worker", "celery", "-A", "apps.worker.celery_app", "worker", "-l", "info"]
-

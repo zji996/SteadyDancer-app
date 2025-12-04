@@ -18,7 +18,7 @@
   - `scripts/dev_up.sh` / `dev_down.sh`：本地依赖服务的启动 / 停止。
   - `scripts/dev_api.sh`：启动 API 服务。
   - `scripts/dev_worker.sh`：启动 Worker。
-  - `scripts/download_models.py`：模型下载与准备入口（占位实现）。
+  - `scripts/download_models.py`：模型下载与准备入口（支持 ModelScope / HuggingFace）。
 - `models/`：模型权重与运行时数据（仅本地存在，不提交到 Git）。
 - `third_party/`：上游仓库 Git submodule，仅作参考。
   - `third_party/SteadyDancer`：SteadyDancer 原始代码仓库。
@@ -45,6 +45,17 @@
 - Turbo / Base / Edit 等具体模型变体及其路径规划，后续可在：
   - `libs/py_core/models/` 中通过适配器进行封装；
   - 在 `docs/architecture.md` 中补充各变体的职责与输入输出约定。
+
+SteadyDancer 适配约定（当前设计）：
+
+- SteadyDancer 权重目录：
+  - 默认：`<MODELS_DIR>/SteadyDancer-14B`
+  - 可通过 `STEADYDANCER_CKPT_DIR` 覆盖。
+- libs 中提供 CLI 适配器：
+  - `libs.py_core.models.steadydancer_cli.run_i2v_generation`：
+    - 调用 `third_party/SteadyDancer/generate_dancer.py` 子进程；
+    - 输入为已经完成姿态预处理的目录（`ref_image.png`、`prompt.txt`、`positive/`、`negative/`）。
+- Worker 侧通过 Celery 任务调用该适配器，API 只与 Celery 队列交互，不直接操作模型。
 
 应用端（API / Worker）只能通过 `libs.py_core.models.*` 来访问模型逻辑，禁止直接引用 `third_party.*`。
 
@@ -78,6 +89,7 @@ uv run --project apps/worker celery -A apps.worker.celery_app worker -l info
   - `CELERY_BROKER_URL`、`CELERY_RESULT_BACKEND`、`CELERY_DEFAULT_QUEUE`、`WORKER_CONCURRENCY` 等环境变量在 `apps/worker/.env.example` 中示例。
 - 示例任务：
   - `worker.health_check`：用于验证 worker 与 broker 的连通性，并返回解析到的 `MODELS_DIR`。
+  - `steadydancer.generate.i2v`：从预处理好的输入目录调用 SteadyDancer CLI 生成视频。
 
 未来可以在 `apps/worker` 中扩展实际的推理任务，逻辑实现放在 `libs/py_core`。
 
@@ -118,7 +130,7 @@ npm run web:dev
   - 不在其中添加业务逻辑。
   - 不直接在应用中 `import third_party...`。
 - 如需使用上游逻辑：
-  - 在 `libs/py_core/models/` 中创建适配器模块（例如 `steadydancer_adapter.py`）。
+  - 在 `libs/py_core/models/` 中创建适配器模块（例如 `steadydancer_cli.py`，后续可扩展为更细粒度的 adapter）。
   - 应用（API / Worker）只 import 适配器，而不关心具体上游实现细节。
 
 ## 7. 运行方式与环境
@@ -145,4 +157,3 @@ npm run web:dev
 - 所有配置通过 `.env` / `.env.example` 管理，实际 `.env` 文件不提交到 Git。
 
 如修改关键环境变量名、目录结构或核心 API，请同步更新本文件与各 app 的 README。
-

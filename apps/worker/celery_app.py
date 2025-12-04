@@ -31,3 +31,13 @@ def health_check() -> dict[str, str]:
         "models_dir": str(models_dir),
     }
 
+
+# Ensure tasks are registered when the worker starts.
+#
+# Importing here is enough for Celery to discover task definitions
+# in `apps.worker.tasks.steadydancer`.
+try:
+    from apps.worker import tasks as _tasks  # noqa: F401
+except Exception:  # pragma: no cover - defensive import
+    _tasks = None
+

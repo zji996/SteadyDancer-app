@@ -6,6 +6,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from apps.api.routes.steadydancer import router as steadydancer_router
 from libs.py_core.config import get_models_dir
 
 
@@ -27,6 +28,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(steadydancer_router)
+
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:
@@ -46,4 +49,3 @@ async def models_info() -> dict[str, str]:
         "models_dir": str(models_dir),
         "env_MODELS_DIR": os.getenv("MODELS_DIR", ""),
     }
-
