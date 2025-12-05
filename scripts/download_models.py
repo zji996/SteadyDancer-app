@@ -167,21 +167,48 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Resolved MODELS_DIR root: {models_root}")
     print(f"Target model directory: {target_dir}")
 
-    source: Literal["modelscope", "huggingface"] = args.source
-    if source == "modelscope":
-        local_path = download_from_modelscope(target_dir)
+    # Fast path: if target_dir already looks like a prepared SteadyDancer
+    # directory, skip any network calls and re-use it as-is.
+    if (target_dir / "config.json").exists() or (target_dir / "configuration.json").exists():
+        print("[Skip] Detected existing SteadyDancer files in target directory, skipping download.")
+        local_path = target_dir
     else:
-        local_path = download_from_huggingface(target_dir)
+        source: Literal["modelscope", "huggingface"] = args.source
+        if source == "modelscope":
+            local_path = download_from_modelscope(target_dir)
+        else:
+            local_path = download_from_huggingface(target_dir)
+
+        # For some backends (e.g. ModelScope), snapshot_download may place
+        # files under a nested directory like:
+        #   <target_dir>/<org>/<model-id>/
+        # To keep our layout stable, flatten that structure into target_dir.
+        if local_path != target_dir:
+            print(f"[Layout] Flattening from {local_path} into {target_dir} ...")
+            for child in local_path.iterdir():
+                dest = target_dir / child.name
+                if dest.exists():
+                    continue
+                child.rename(dest)
+            # Best-effort cleanup of now-empty parent directories.
+            try:
+                local_path.rmdir()
+                local_path_parent = local_path.parent
+                if local_path_parent != target_dir:
+                    local_path_parent.rmdir()
+            except OSError:
+                # It's fine to leave empty or partially-empty directories behind.
+                pass
+            local_path = target_dir
 
     print("\nDone.")
     print(f"Final model path: {local_path}")
     print(
         "\nFor inference, ensure the environment variable STEADYDANCER_CKPT_DIR "
-        f"is set to this path, or leave it empty to let the code default to "
-        f\"{models_root / DEFAULT_MODEL_SUBDIR}\"."
+        "is set to this path, or leave it empty to let the code default to "
+        f"{models_root / DEFAULT_MODEL_SUBDIR}."
     )
 
 
 if __name__ == "__main__":
     main()
-

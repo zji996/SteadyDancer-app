@@ -12,5 +12,5 @@
 - `third_party/`：上游仓库 Git submodule（只读）。
 
 硬性规范与 Agent 约束见根目录 `AGENTS.md`。
-整体架构说明见 `docs/architecture.md`。
+整体架构说明见 `docs/architecture.md`，快速上手指南见 `docs/quickstart.md`。
 
