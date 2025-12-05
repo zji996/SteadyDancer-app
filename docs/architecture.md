@@ -74,6 +74,104 @@ SteadyDancer 适配约定（当前设计）：
 uv run --project apps/api uvicorn apps.api.main:app --reload
 ```
 
+#### 3.1.1 项目（Project）与任务（Job）分层
+
+为了方便长期管理生成记录与文件，API 引入了「项目（Project）+ 任务（Job）」的抽象：
+
+- `Project`：一组相关生成任务的逻辑集合，例如同一个角色 / 拍摄项目。
+- `Job`：一次具体的 SteadyDancer 生成调用，对应一份输入和一份输出视频。
+
+核心 HTTP 接口：
+
+- `POST /projects`
+  - 创建项目：接收 `name` / `description`，返回 `project_id`（UUID）。
+- `GET /projects/{project_id}`
+  - 查询项目基础信息。
+- `POST /projects/{project_id}/steadydancer/jobs`
+  - 在指定项目下创建 SteadyDancer I2V 任务；
+  - 请求体与 `/steadydancer/jobs` 相同（尺寸、帧数、seed 等），并传入预处理完成的 `input_dir`；
+  - API 会：
+    - 为该 Job 生成 `job_id`（UUID）；
+    - 在数据目录下创建标准 Job 目录结构，并将 `input_dir` 拷贝到 job 的 `input/`；
+    - 通过 Celery 将任务入队，并在数据库中记录一条 `Job` 记录。
+- `GET /projects/{project_id}/steadydancer/jobs/{job_id}`
+  - 查询该 Job 状态；
+  - 通过 Celery 读取任务状态和结果（`success` / `video_path` / `stdout` / `stderr` / `return_code`），并与数据库中的 Job 元数据合并返回。
+
+此外保留了低级接口：
+
+- `POST /steadydancer/jobs` / `GET /steadydancer/jobs/{task_id}`  
+  直接以 `task_id` 封装 Celery 队列，适合调试或临时调用；推荐业务侧优先使用 Project + Job 路径。
+
+#### 3.1.2 资产（Asset）与实验（Experiment）分层
+
+为了支持「一张参考图对应多段舞蹈」以及「多张参考图复用同一段舞蹈」等工作流，在 Project 内进一步引入资产与实验的抽象：
+
+- `ReferenceAsset`：参考图资产（角色 / 人物），通常是一张或多张图；
+- `MotionAsset`：动作 / 舞蹈资产，对应一段 driving video；
+- `Experiment`：一次实验配置，描述「用哪个 Reference + 哪个 Motion + 一组默认参数」，其下可以有多个实际运行的 `Job`。
+
+典型链路：
+
+- 注册资产：
+  - `POST /projects/{project_id}/refs`：登记参考图（传入本地文件路径，API 拷贝到 `refs/{ref_id}`）；
+  - `POST /projects/{project_id}/motions`：登记舞蹈视频（拷贝到 `motions/{motion_id}`）。
+- 创建实验：
+  - `POST /projects/{project_id}/experiments`：
+    - 指定 `reference_id` / `motion_id`；
+    - 指定 `source_input_dir`（已有的 SteadyDancer 预处理目录）；
+    - 可选传入一份默认的 SteadyDancer 配置（尺寸、帧数、seed 等），作为 `config` 存储。
+  - API 会将 `source_input_dir` 拷贝到：
+
+    ```text
+    <STEADYDANCER_DATA_DIR>/projects/{project_id}/experiments/{experiment_id}/input/
+    ```
+
+    并在 DB 的 `experiments.input_dir` 中记录这一「规范化输入目录」。
+- 从实验创建 Job：
+  - `POST /projects/{project_id}/experiments/{experiment_id}/steadydancer/jobs`：
+    - 默认使用 Experiment 的 `input_dir` 作为 Job 的输入源；
+    - 请求体参数可覆盖实验级配置（例如修改 seed / 尺寸）；
+    - API 为该 Job 创建单独的工作目录并入队 Celery 推理。
+
+这样，一个 Project 就成为「工作平台」：
+
+- `ReferenceAsset` 和 `MotionAsset` 分别复用角色图与舞蹈视频；
+- `Experiment` 固定「角色 + 舞蹈 + 默认参数」；
+- `Job` 则记录每次具体的生成运行（不同种子 / 不同微调）。
+
+#### 3.1.3 API 内部分层与解耦
+
+`apps/api` 内部采用「路由层（HTTP）+ 服务层 + 持久化层」的轻量分层：
+
+- 路由层（`apps/api/routes/*`）：
+  - 只负责 HTTP 相关逻辑（参数解析、状态码、错误映射）；
+  - 调用下层服务完成业务操作。
+- 服务层（`apps/api/services/*`）：
+  - `services/projects.py`：项目的创建与查询；
+  - `services/assets.py`：Project 下参考图 / 动作资产的创建与查询；
+  - `services/experiments.py`：实验的创建与查询（包含规范化输入目录的准备）；
+  - `services/steadydancer_jobs.py`：
+    - 构造 SteadyDancer Celery 任务 payload；
+    - 统一的 `enqueue_steadydancer_task` / `query_celery_task`；
+    - 针对 Project / Experiment 下 Job 的创建与状态刷新（包含目录准备、结果视频规范化迁移等）。
+- 持久化层（`apps/api/db.py`）：
+  - 基于 SQLAlchemy 2.x + asyncpg：
+    - `Project` ORM：`id`（UUID）、`name`、`description`、`created_at`、`updated_at`；
+    - `ReferenceAsset` / `MotionAsset`：
+      - `id`（UUID）、`project_id`、`name`、`image_path` / `video_path`、`meta`（JSONB）、时间戳；
+    - `Experiment`：
+      - `id`（UUID）、`project_id`、`reference_id`、`motion_id`、`name`、`description`；
+      - `input_dir`（实验级规范化输入目录）、`config`（JSONB）、时间戳；
+    - `Job`（表名 `generation_jobs`）：
+      - `id`（UUID）、`project_id`、`experiment_id`、`task_id`（Celery 任务 ID）、`job_type`；
+      - `status`（Celery 状态）、`input_dir`、`params`（JSONB）；
+      - `success`、`result_video_path`（统一迁移到 Job 的 `output/` 后的路径）、`error_message`；
+      - `created_at`、`updated_at`、`finished_at`。
+  - 暴露 `engine`、`AsyncSessionFactory` 与 `get_session` 作为 FastAPI 依赖。
+
+API 的启动生命周期（`lifespan`）中会在开发环境通过 `init_db()` 调用 `Base.metadata.create_all()` 初始化表结构，生产环境推荐使用独立迁移工具。
+
 ### 3.2 Worker（apps/worker）
 
 - 技术栈：Celery（推荐使用 Redis broker）。
@@ -113,7 +211,7 @@ npm run web:dev
 
 - 数据库：Postgres（由 `infra/docker-compose.dev.yml` 提供）。
   - 默认数据库名：`steadydancer`。
-  - 典型用途：用户信息、任务记录、审计日志等。
+  - 典型用途：用户信息、任务记录（Project / Job）、审计日志等。
 - 缓存 / 队列：Redis。
   - 用途：
     - API 缓存热数据；
@@ -132,6 +230,61 @@ npm run web:dev
 - 如需使用上游逻辑：
   - 在 `libs/py_core/models/` 中创建适配器模块（例如 `steadydancer_cli.py`，后续可扩展为更细粒度的 adapter）。
   - 应用（API / Worker）只 import 适配器，而不关心具体上游实现细节。
+
+### 6.1 项目 / 资产 / 实验 / Job 数据目录适配（libs/py_core/projects.py）
+
+与模型目录解耦，项目及其资产 / 实验 / Job 的业务数据统一放在 `STEADYDANCER_DATA_DIR` 下，由 `libs.py_core.projects` 提供路径计算：
+
+- 根目录：
+  - `STEADYDANCER_DATA_DIR`（可配置环境变量），默认：`<repo_root>/assets/projects`；
+  - `STEADYDANCER_TMP_DIR`（可选），默认：`<STEADYDANCER_DATA_DIR>/tmp`。
+- 单个 Project：
+
+  ```text
+  <STEADYDANCER_DATA_DIR>/projects/{project_id}/
+  ```
+
+- 参考图资产（ReferenceAsset）：
+
+  ```text
+  <STEADYDANCER_DATA_DIR>/projects/{project_id}/refs/{ref_id}/
+    source/      # 原始参考图文件（由 API 从 source_image_path 拷贝而来）
+    meta.json    # 可选：角色名、提示词等元信息
+  ```
+
+- 动作资产（MotionAsset）：
+
+  ```text
+  <STEADYDANCER_DATA_DIR>/projects/{project_id}/motions/{motion_id}/
+    source/      # 原始 driving video 文件
+    meta.json    # 可选：风格标签、时长等
+  ```
+
+- 实验（Experiment）：
+
+  ```text
+  <STEADYDANCER_DATA_DIR>/projects/{project_id}/experiments/{experiment_id}/
+    input/       # 规范化的 SteadyDancer 输入目录（pair_dir 拷贝）
+    config.json  # 可选：SteadyDancer 默认配置快照
+  ```
+
+- Job：
+
+  ```text
+  <STEADYDANCER_DATA_DIR>/projects/{project_id}/jobs/{job_id}/
+    input/   # 本 Job 的输入（从 Experiment.input 或用户传入目录拷贝）
+    output/  # 推理生成的视频等结果（API 在任务完成后会将结果视频规范化移动到该目录）
+    tmp/     # 中间临时文件（一次性缓存，可按策略清理）
+    logs/    # 可选：stdout/stderr 等日志落地
+  ```
+
+`libs.py_core.projects` 提供：
+
+- `ensure_reference_dirs` / `ensure_motion_dirs`：保证资产目录存在；
+- `ensure_experiment_dirs`：为 Experiment 创建 `input/` 与 `config.json` 所在目录；
+- `ensure_job_dirs`：为 Job 创建 `input/` / `output/` / `tmp/` / `logs/` 目录。
+
+API 在创建 Experiment / Job 时会调用这些工具函数，确保文件布局稳定且可预期。
 
 ## 7. 运行方式与环境
 

@@ -122,10 +122,8 @@ uv run --project apps/api python scripts/download_models.py --source huggingface
 scripts/dev_up.sh
 ```
 
-这会根据 `infra/docker-compose.dev.yml` 启动：
-
-- Postgres（默认数据库名 `steadydancer`）
-- Redis（用于缓存与 Celery broker/result backend）
+这会根据 `infra/docker-compose.dev.yml` 启动本地依赖服务（Postgres / Redis 等），
+用于 API / Worker 的数据库与队列。详细角色说明见 `docs/architecture.md` 与接口文档。
 
 如需停止：
 
@@ -161,12 +159,7 @@ cp apps/api/.env.example apps/api/.env
 scripts/dev_api.sh
 ```
 
-API 会监听 `http://0.0.0.0:8000`，提供：
-
-- `GET /health`
-- `GET /models/info`
-- `POST /steadydancer/jobs`
-- `GET /steadydancer/jobs/{task_id}`
+API 默认监听 `http://0.0.0.0:8000`，具体接口与返回结构见专门的接口文档。
 
 ---
 
@@ -208,39 +201,15 @@ npm run web:dev
 
 确保 Worker 与 API 已按前文启动。
 
-```bash
-curl -X POST http://localhost:8000/steadydancer/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input_dir": "<pair_dir 的绝对路径或者相对仓库根路径>",
-    "size": "1024*576",
-    "frame_num": 81,
-    "sample_guide_scale": 5.0,
-    "condition_guide_scale": 1.0,
-    "end_cond_cfg": 0.4,
-    "base_seed": 106060
-  }'
-```
+推荐通过以下两种方式之一提交生成任务：
 
-返回示例：
+- 使用 Web 前端（`apps/web`）作为控制台；
+- 直接调用 HTTP API（包括 Project / Asset / Experiment / Job 等接口）。
 
-```json
-{ "task_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" }
-```
+具体接口路径、请求体示例以及返回字段说明，统一维护在接口与数据模型文档中。
 
 ### 6.3 查询任务状态并获取结果
-
-```bash
-curl http://localhost:8000/steadydancer/jobs/<task_id>
-```
-
-当 `state` 为 `SUCCESS` 时，`result` 中会包含：
-
-- `success`: `true/false`
-- `video_path`: 生成的视频路径（通常位于 `input_dir/steadydancer_i2v_*.mp4`）
-- `stdout` / `stderr` / `return_code`: 上游脚本的运行日志与状态
-
-到此，一条「API → Celery → Worker → SteadyDancer CLI」的最小链路即打通。
+任务状态查询与结果视频路径的获取，同样通过 HTTP API 完成，调用方式与字段说明请参考接口与数据模型文档。
 
 ---
 
@@ -262,4 +231,3 @@ curl http://localhost:8000/steadydancer/jobs/<task_id>
   确认：
   - `scripts/download_models.py` 执行成功；
   - `MODELS_DIR` / `STEADYDANCER_CKPT_DIR` 与实际路径一致（可访问 API 的 `GET /models/info` 检查）。
-

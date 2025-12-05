@@ -284,6 +284,7 @@ uv run --project apps/worker python scripts/compress_steadydancer_dfloat11.py \
   --ckpt-dir models/SteadyDancer-14B \
   --save-dir models/SteadyDancer-14B-df11 \
   --threads-per-block 512 \
+  --skip-diffusion \
   --no-check-correctness \
   --skip-t5 \
   --skip-clip
@@ -292,37 +293,41 @@ uv run --project apps/worker python scripts/compress_steadydancer_dfloat11.py \
 - `--threads-per-block`：
   - 覆盖 DF11 内部的 `threads_per_block`，写入 `dfloat11_config`。
   - 默认 `0` 表示使用上游默认值（通常是 512）。
+- `--skip-diffusion`：
+  - 跳过 Wan diffusion 主干的 DF11 压缩，只运行 T5 / CLIP（如果未显式 `--skip-t5` / `--skip-clip`）。
+  - 适合已经完成 diffusion 主干压缩、只想补跑 T5 / CLIP 的场景。
 - `--no-check-correctness`：
   - 关闭 DF11 的 GPU bit‑exact 校验，避免 14B 模型在小显存卡上 OOM。
 - `--skip-t5` / `--skip-clip`：
   - 跳过 T5 / CLIP 的 DF11 压缩，只压 Wan diffusion 主干。
 
-### 9.4 运行结果与幂等性
+### 8.4 压缩策略与幂等性
 
-脚本在执行时会：
+压缩脚本对不同组件采用了统一的“按压缩率选择性压缩”策略（仅在 `--no-check-correctness` 时启用）：
 
-1. 在 DF11 目录中清理任何残留的原始 diffusion BF16 分片：
+- 对 Wan diffusion 主干 / T5 / CLIP 的每个 `nn.Linear` / `nn.Embedding`：
+  - 先按 DFloat11 的流程完成一次编码；
+  - 计算压缩率：
+    - `compressed_bytes / original_bytes * 100`（原始 BF16 为 2 字节 / 元素）；
+  - 若压缩率 `<= 100%`：
+    - 将该层真正转换为 DF11，删除原始 `weight`，注册 DF11 所需的 buffer；
+    - `dfloat11_config.pattern_dict` 中会记录该模块；
+  - 若压缩率 `> 100%`：
+    - 跳过该层，仅打印提示，不做 DF11 转换；
+    - 该层在最终的 `model.safetensors` 中仍以 BF16 形式保存；
+    - 对应模块不会写入 `dfloat11_config.pattern_dict`。
 
-   - 删除：
-     - `diffusion_pytorch_model-*-of-*.safetensors`
-     - `diffusion_pytorch_model.safetensors`
-     - `diffusion_pytorch_model.safetensors.index.json`
-   - 仅作用于 `<ckpt_dir>-df11`，不会影响原始 `<ckpt_dir>`。
+这样可以避免“压缩后反而变大”的极端层，同时保证：
 
-2. 从原始目录复制其余资产（VAE、T5、CLIP、tokenizer、配置等）到 DF11 目录。
+- 绝大多数组件用 DF11 节省显存；
+- 少数压不动的层保留为 BF16，不影响正确性。
 
-3. 在 DF11 目录写入：
+脚本是幂等的：
 
-   - Wan diffusion 主干的 DF11：`model.safetensors` + `config.json`（只含 `dfloat11_config`）。
-   - T5 DF11：`t5_df11/model.safetensors` + `t5_df11/config.json`。
-   - CLIP DF11：`clip_df11/model.safetensors` + `clip_df11/config.json`。
+- 重复运行会重新生成 DF11 单文件，但目录结构保持不变；
+- 若已存在 `t5_df11/model.safetensors` 或 `clip_df11/model.safetensors`，对应子模块会跳过重复压缩。
 
-脚本设计为幂等：
-
-- 重复执行时，如果检测到 `t5_df11/model.safetensors` / `clip_df11/model.safetensors` 已存在，会跳过对应子模块的重复压缩。
-- 会确保 DF11 目录中没有原始 diffusion 分片，仅保留 DF11 权重。
-
-### 9.5 推理时的接入思路（高层）
+### 8.5 推理时的接入思路（高层）
 
 当前仓库只提供 **离线压缩脚本**，不强行绑死推理路径；接入方式建议：
 
@@ -331,4 +336,18 @@ uv run --project apps/worker python scripts/compress_steadydancer_dfloat11.py \
 - T5 / CLIP：
   - 同样可以通过 DF11 提供的 API 针对各自 DF11 子目录构建 `DFloat11Model`，或在自定义加载逻辑里读取 `t5_df11` / `clip_df11` 的 `dfloat11_config`。
 
-后续如果需要在 `apps/worker` 里提供“一键使用 SteadyDancer-14B-df11”的开关，可以在新的文档章节补充具体集成方案。
+### 8.6 apps/worker 集成（DF11 开关）
+
+当前仓库已经在 `apps/worker` 中接入了一个简单的 DF11 推理路径（单进程）：
+
+- 环境变量开关：
+  - `STEADYDANCER_USE_DF11=1` 时，Celery 任务会通过 `wan.WanI2VDancer` + `DFloat11Model.from_pretrained(...)` 在 Worker 进程内直接加载 DF11 权重；
+  - 否则仍走原始的 `generate_dancer.py` BF16 CLI 路径。
+- 路径约定：
+  - `STEADYDANCER_CKPT_DIR`：指向原始 BF16 目录（默认 `<MODELS_DIR>/SteadyDancer-14B`），用于加载 VAE / T5 / CLIP 等组件；
+  - `STEADYDANCER_DF11_DIR`：可选，默认 `<STEADYDANCER_CKPT_DIR>-df11`，即 `models/SteadyDancer-14B-df11`。
+- 显存策略：
+  - `STEADYDANCER_DF11_CPU_OFFLOAD=1`（默认）时，DF11 权重常驻 CPU，仅在前向时按块解码到 GPU，适合 3080 等显存较小的卡；
+  - `STEADYDANCER_DF11_DEVICE_MAP_AUTO=1`（实验性）时，DF11 主干会通过 Accelerate 的 `device_map=\"auto\"` 自动切分到多张 GPU 上，适合双 3080 等多卡环境，出现问题可关闭回退到单卡。
+
+更细粒度的调度（如 FSDP + xDiT USP 多机多卡）仍建议直接参考上游 `generate_dancer.py` 与 Wan 官方文档，在专用脚本或服务中按需集成。

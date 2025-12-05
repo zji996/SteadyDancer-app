@@ -13,5 +13,6 @@ RUN uv sync --group default
 COPY . /app
 
 ENV MODELS_DIR=/models
+ENV STEADYDANCER_DATA_DIR=/data/steadydancer
 
 CMD ["uv", "run", "--project", "apps/api", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

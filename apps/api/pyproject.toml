@@ -12,7 +12,9 @@ dependencies = [
     "pydantic>=2.4.0,<3.0.0",
     "python-dotenv>=1.0.0,<2.0.0",
     "modelscope",
-    "huggingface_hub"
+    "huggingface_hub",
+    "SQLAlchemy>=2.0.0,<3.0.0",
+    "asyncpg>=0.29.0,<1.0.0"
     
 ]
 

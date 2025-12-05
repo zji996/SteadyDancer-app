@@ -34,6 +34,7 @@ Pass --no-check-correctness to disable the check if you hit CUDA OOM.
 """
 
 import argparse
+import gc
 import os
 import shutil
 import sys
@@ -572,6 +573,9 @@ def _compress_t5_encoder(
 
     state_dict = torch.load(t5_ckpt, map_location="cpu")
     model.load_state_dict(state_dict)
+    # state_dict no longer needed once loaded into the model.
+    del state_dict
+    gc.collect()
     model.to(torch.bfloat16)
 
     pattern_dict = _build_pattern_dict(model)
@@ -594,6 +598,10 @@ def _compress_t5_encoder(
             save_path=str(t5_save_dir),
             compression_threshold=100.0,
         )
+
+    # Release T5 model to free CPU RAM before moving on.
+    del model
+    gc.collect()
 
 
 def _compress_clip_model(
@@ -667,6 +675,9 @@ def _compress_clip_model(
 
     state_dict = torch.load(clip_ckpt, map_location="cpu")
     model.load_state_dict(state_dict)
+    # state_dict no longer needed once loaded into the model.
+    del state_dict
+    gc.collect()
     model.to(torch.bfloat16)
 
     pattern_dict = _build_pattern_dict(model)
@@ -689,6 +700,10 @@ def _compress_clip_model(
             save_path=str(clip_save_dir),
             compression_threshold=100.0,
         )
+
+    # Release CLIP model to free CPU RAM before exiting this phase.
+    del model
+    gc.collect()
 
 
 
@@ -721,6 +736,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Override DFloat11 CUDA threads_per_block (global setting). "
             "Use 0 to keep the upstream default."
+        ),
+    )
+    parser.add_argument(
+        "--skip-diffusion",
+        action="store_true",
+        help=(
+            "Skip DF11 compression for the Wan diffusion backbone. "
+            "Use this if diffusion has already been compressed and you "
+            "only want to process T5 / CLIP."
         ),
     )
     parser.add_argument(
@@ -779,28 +803,34 @@ def main(argv: list[str] | None = None) -> None:
     _patch_dfloat11_get_luts(dfloat11_module)
     _override_threads_per_block(dfloat11_module, args.threads_per_block)
 
-    model = _load_wan_model(ckpt_dir)
-    pattern_dict = _build_pattern_dict(model)
+    if not args.skip_diffusion:
+        model = _load_wan_model(ckpt_dir)
+        pattern_dict = _build_pattern_dict(model)
 
-    print("[DF11] Starting compression (Wan diffusion backbone, selective) ...")
-    if args.no_check_correctness:
-        _selective_compress_model(
-            dfloat11_module,
-            model=model,
-            pattern_dict=pattern_dict,
-            save_path=str(save_dir),
-            compression_threshold=100.0,
-        )
+        print("[DF11] Starting compression (Wan diffusion backbone, selective) ...")
+        if args.no_check_correctness:
+            _selective_compress_model(
+                dfloat11_module,
+                model=model,
+                pattern_dict=pattern_dict,
+                save_path=str(save_dir),
+                compression_threshold=100.0,
+            )
+        else:
+            # 若需要开启 correctness check，则退回官方 compress_model 实现。
+            dfloat11_module.compress_model(
+                model=model,
+                pattern_dict=pattern_dict,
+                save_path=str(save_dir),
+                block_range=[0, 10_000_000],
+                save_single_file=True,
+                check_correctness=True,
+            )
+        # Release Wan diffusion model once this phase is done.
+        del model
+        gc.collect()
     else:
-        # 若需要开启 correctness check，则退回官方 compress_model 实现。
-        dfloat11_module.compress_model(
-            model=model,
-            pattern_dict=pattern_dict,
-            save_path=str(save_dir),
-            block_range=[0, 10_000_000],
-            save_single_file=True,
-            check_correctness=True,
-        )
+        print("[DF11] Skipping Wan diffusion backbone compression (per --skip-diffusion).")
 
     # Optionally compress the T5 text encoder checkpoint into a separate
     # DF11 directory under save_dir.

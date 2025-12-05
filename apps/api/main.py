@@ -6,6 +6,8 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from apps.api.db import engine, init_db
+from apps.api.routes.projects import router as projects_router
 from apps.api.routes.steadydancer import router as steadydancer_router
 from libs.py_core.config import get_models_dir
 
@@ -17,9 +19,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     Place startup / shutdown logic here (DB connections, model warmup, etc.).
     """
-    # TODO: initialize DB connections, model clients, etc.
-    yield
-    # TODO: gracefully shutdown connections
+    # Initialize database schema (development convenience).
+    await init_db()
+    try:
+        yield
+    finally:
+        # Gracefully dispose DB connections.
+        await engine.dispose()
 
 
 app = FastAPI(
@@ -28,6 +34,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(projects_router)
 app.include_router(steadydancer_router)
 
 
