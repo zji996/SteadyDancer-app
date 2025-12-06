@@ -38,6 +38,25 @@ class SteadyDancerJobCreate(BaseModel):
         -1,
         description="Base random seed; -1 means random seed as in upstream.",
     )
+    sample_steps: int | None = Field(
+        None,
+        description="Optional sampling steps; forwarded to upstream sampler when supported.",
+    )
+    sample_shift: float | None = Field(
+        None,
+        description="Optional sampling shift factor for flow-matching schedulers.",
+    )
+    sample_solver: str | None = Field(
+        None,
+        description="Optional sampling solver, e.g. 'unipc' or 'dpm++'.",
+    )
+    offload_model: bool | None = Field(
+        None,
+        description=(
+            "Override model offload behavior for the backend. "
+            "If unset, each backend uses its own default."
+        ),
+    )
     cuda_visible_devices: str | None = Field(
         None,
         description="Optional CUDA_VISIBLE_DEVICES override for this job.",
@@ -52,4 +71,3 @@ class SteadyDancerJobStatus(BaseModel):
     task_id: str
     state: str
     result: dict[str, Any] | None = None
-

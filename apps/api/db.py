@@ -5,17 +5,23 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import UUID, uuid4
 
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    ForeignKey,
-    String,
-    Text,
-)
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    """
+    Parse a boolean-ish environment variable.
+
+    Accepts: 1/true/yes/y/on (case-insensitive) as True, 0/false/no/n/off as False.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _make_async_url(raw_url: str | None) -> str:
@@ -47,12 +53,17 @@ AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False, class_=
 class Project(Base):
     __tablename__ = "projects"
 
+    __table_args__ = (
+        Index("ix_projects_created_at", "created_at"),
+        Index("ix_projects_updated_at", "updated_at"),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
     )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -94,6 +105,14 @@ class Project(Base):
 class ReferenceAsset(Base):
     __tablename__ = "reference_assets"
 
+    __table_args__ = (
+        Index(
+            "ix_reference_assets_project_created_at",
+            "project_id",
+            "created_at",
+        ),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -103,6 +122,7 @@ class ReferenceAsset(Base):
         PG_UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     image_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -128,6 +148,14 @@ class ReferenceAsset(Base):
 class MotionAsset(Base):
     __tablename__ = "motion_assets"
 
+    __table_args__ = (
+        Index(
+            "ix_motion_assets_project_created_at",
+            "project_id",
+            "created_at",
+        ),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -137,6 +165,7 @@ class MotionAsset(Base):
         PG_UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     video_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -162,6 +191,14 @@ class MotionAsset(Base):
 class Experiment(Base):
     __tablename__ = "experiments"
 
+    __table_args__ = (
+        Index(
+            "ix_experiments_project_created_at",
+            "project_id",
+            "created_at",
+        ),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -171,6 +208,7 @@ class Experiment(Base):
         PG_UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     reference_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -213,6 +251,20 @@ class Experiment(Base):
 class Job(Base):
     __tablename__ = "generation_jobs"
 
+    __table_args__ = (
+        Index(
+            "ix_generation_jobs_project_created_at",
+            "project_id",
+            "created_at",
+        ),
+        Index(
+            "ix_generation_jobs_project_experiment_created_at",
+            "project_id",
+            "experiment_id",
+            "created_at",
+        ),
+    )
+
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
@@ -222,15 +274,32 @@ class Job(Base):
         PG_UUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     experiment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("experiments.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     task_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        Enum(
+            "PENDING",
+            "RECEIVED",
+            "STARTED",
+            "RETRY",
+            "REVOKED",
+            "SUCCESS",
+            "FAILURE",
+            "EXPIRED",
+            "UNKNOWN",
+            name="job_status_enum",
+        ),
+        nullable=False,
+        default="PENDING",
+    )
     input_dir: Mapped[str] = mapped_column(Text, nullable=False)
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     success: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -247,8 +316,20 @@ class Job(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    cancel_reason: Mapped[str | None] = mapped_column(
+        Text,
         nullable=True,
     )
 
@@ -276,7 +357,14 @@ async def init_db() -> None:
 
     Production deployments are expected to manage migrations explicitly,
     but create_all() is convenient in development.
+
+    Controlled by STEADYDANCER_DB_AUTO_CREATE:
+    - If unset or truthy (1/true/yes/...), tables will be created if missing;
+    - If set to a falsy value, init_db() becomes a no-op.
     """
+    if not _bool_env("STEADYDANCER_DB_AUTO_CREATE", default=True):
+        return
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

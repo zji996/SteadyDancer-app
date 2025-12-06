@@ -37,6 +37,13 @@ class ProjectJobStatus(BaseModel):
     result: dict[str, Any] | None = None
 
 
+class ProjectJobCancel(BaseModel):
+    reason: str | None = Field(
+        None,
+        description="Optional human-readable reason for cancelling the job.",
+    )
+
+
 class ProjectJobSummary(BaseModel):
     id: UUID
     project_id: UUID

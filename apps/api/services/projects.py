@@ -3,9 +3,16 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import Project
+
+
+class ProjectNameAlreadyExistsError(Exception):
+    """
+    Raised when attempting to create a project with a duplicate name.
+    """
 
 
 async def create_project(
@@ -18,7 +25,14 @@ async def create_project(
     """
     project = Project(name=name, description=description)
     session.add(project)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise ProjectNameAlreadyExistsError(
+            f"Project with name {name!r} already exists."
+        ) from exc
+
     await session.refresh(project)
     return project
 

@@ -17,6 +17,7 @@ from apps.api.schemas.assets import (
 from apps.api.schemas.experiments import ExperimentCreate, ExperimentOut
 from apps.api.schemas.projects import (
     ProjectCreate,
+    ProjectJobCancel,
     ProjectJobCreated,
     ProjectJobStatus,
     ProjectJobSummary,
@@ -27,6 +28,7 @@ from apps.api.services import assets as asset_service
 from apps.api.services import experiments as experiment_service
 from apps.api.services import projects as project_service
 from apps.api.services import steadydancer_jobs as job_service
+from libs.py_core.projects import from_data_relative
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -50,11 +52,17 @@ async def create_project(
     """
     Create a new logical project for grouping SteadyDancer jobs.
     """
-    project = await project_service.create_project(
-        session=session,
-        name=payload.name,
-        description=payload.description,
-    )
+    try:
+        project = await project_service.create_project(
+            session=session,
+            name=payload.name,
+            description=payload.description,
+        )
+    except project_service.ProjectNameAlreadyExistsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
     return project
 
 
@@ -145,6 +153,41 @@ async def get_project_steadydancer_job_status(
     )
 
 
+@router.post(
+    "/{project_id}/steadydancer/jobs/{job_id}/cancel",
+    response_model=ProjectJobStatus,
+)
+async def cancel_project_steadydancer_job(
+    project_id: UUID,
+    job_id: UUID,
+    payload: ProjectJobCancel | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectJobStatus:
+    """
+    Cancel a SteadyDancer job within a project.
+
+    This endpoint issues a Celery revoke and records cancellation metadata
+    in the Job row for later inspection.
+    """
+    job = await session.get(Job, job_id)
+    if job is None or job.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+
+    job = await job_service.cancel_project_job(
+        session=session,
+        job=job,
+        reason=payload.reason if payload is not None else None,
+    )
+
+    return ProjectJobStatus(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=job.task_id,
+        state=job.status,
+        result=None,
+    )
+
+
 @router.get(
     "/{project_id}/steadydancer/jobs/{job_id}/download",
     response_class=FileResponse,
@@ -170,7 +213,7 @@ async def download_project_steadydancer_job_video(
             detail="Job has no completed result video.",
         )
 
-    path = Path(job.result_video_path).expanduser().resolve()
+    path = from_data_relative(job.result_video_path)
     if not path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import Experiment, MotionAsset, Project, ReferenceAsset
 from apps.api.schemas.experiments import ExperimentConfig, ExperimentCreate
-from libs.py_core.projects import ensure_experiment_dirs
+from libs.py_core.projects import ensure_experiment_dirs, to_data_relative
 
 
 class ProjectNotFoundError(Exception):
@@ -100,7 +100,7 @@ async def create_experiment(
         motion_id=motion_id,
         name=payload.name,
         description=payload.description,
-        input_dir=str(paths.input_dir),
+        input_dir=to_data_relative(paths.input_dir),
         config=config_dict,
     )
     session.add(experiment)

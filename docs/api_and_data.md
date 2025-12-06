@@ -180,7 +180,7 @@
 - 返回：`ExperimentOut`
   - `id, project_id, reference_id?, motion_id?`
   - `name, description?`
-  - `input_dir?`：实验级规范化输入目录绝对路径
+  - `input_dir?`：实验级规范化输入目录（相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
   - `config?`：JSON，对应请求体中的 `config`
 
 #### 3.4.2 查询实验
@@ -214,6 +214,10 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
     "condition_guide_scale": 1.0,
     "end_cond_cfg": 0.4,
     "base_seed": 106060,
+    "sample_steps": null,
+    "sample_shift": null,
+    "sample_solver": null,
+    "offload_model": null,
     "cuda_visible_devices": null
   }
   ```
@@ -237,10 +241,10 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 - `GET /projects/{project_id}/steadydancer/jobs/{job_id}`
 - 返回：`ProjectJobStatus`
   - `project_id, job_id, task_id`
-  - `state: string`（Celery 状态：`PENDING` / `STARTED` / `SUCCESS` / `FAILURE` 等）
+  - `state: string`（Celery 状态：`PENDING` / `STARTED` / `SUCCESS` / `FAILURE` / `REVOKED` 等，Celery 结果过期时后端可能转换为 `EXPIRED`）
   - `result?: object`（当任务成功时）
     - `success: bool`
-    - `video_path: string | null`：规范化后的结果视频路径（位于 Job 的 `output/` 目录）
+    - `video_path: string | null`：规范化后的结果视频路径（位于 Job 的 `output/` 目录，API 返回绝对路径，DB 中持久化为相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
     - `stdout: string`
     - `stderr: string`
     - `return_code: int`
@@ -255,7 +259,7 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
   - `task_id: string`
   - `job_type: string`（当前为 `"steadydancer_i2v"`）
   - `status: string`
-  - `result_video_path?: string`
+  - `result_video_path?: string`（结果视频路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 
 #### 3.5.5 列出某个实验下的 Job
 
@@ -273,6 +277,22 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
   - 返回：
     - 成功：`200 OK`, `Content-Type: video/mp4`，`Content-Disposition` 带文件名；
     - 各类错误：返回 `404`，带有相应错误说明。
+
+#### 3.5.7 取消 Job
+
+- `POST /projects/{project_id}/steadydancer/jobs/{job_id}/cancel`
+- 请求体：`ProjectJobCancel`
+
+  ```json
+  {
+    "reason": "optional human-readable reason"
+  }
+  ```
+
+- 行为：
+  - 调用 Celery 的 `revoke(task_id, terminate=True)` 尝试终止任务；
+  - 在 `generation_jobs` 表中记录 `status = "REVOKED"`、`canceled_at` 与可选的 `cancel_reason`。
+- 返回：`ProjectJobStatus`（此时 `state` 通常为 `"REVOKED"`）。
 
 ---
 
@@ -318,7 +338,7 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 ### 4.1 projects
 
 - `id UUID PRIMARY KEY`
-- `name TEXT NOT NULL`
+- `name TEXT NOT NULL UNIQUE`
 - `description TEXT NULL`
 - `created_at TIMESTAMPTZ NOT NULL`
 - `updated_at TIMESTAMPTZ NOT NULL`
@@ -328,7 +348,7 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 - `id UUID PRIMARY KEY`
 - `project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE`
 - `name TEXT NOT NULL`
-- `image_path TEXT NOT NULL`（参考图文件路径）
+- `image_path TEXT NOT NULL`（参考图文件路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 - `meta JSONB NULL`（可选元信息）
 - `created_at TIMESTAMPTZ NOT NULL`
 - `updated_at TIMESTAMPTZ NOT NULL`
@@ -338,7 +358,7 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 - `id UUID PRIMARY KEY`
 - `project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE`
 - `name TEXT NOT NULL`
-- `video_path TEXT NOT NULL`（driving video 文件路径）
+- `video_path TEXT NOT NULL`（driving video 文件路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 - `meta JSONB NULL`
 - `created_at TIMESTAMPTZ NOT NULL`
 - `updated_at TIMESTAMPTZ NOT NULL`
@@ -351,7 +371,7 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 - `motion_id UUID NULL REFERENCES motion_assets(id) ON DELETE SET NULL`
 - `name TEXT NOT NULL`
 - `description TEXT NULL`
-- `input_dir TEXT NULL`（实验级规范化输入目录）
+- `input_dir TEXT NULL`（实验级规范化输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 - `config JSONB NULL`（默认 SteadyDancer 配置）
 - `created_at TIMESTAMPTZ NOT NULL`
 - `updated_at TIMESTAMPTZ NOT NULL`
@@ -363,15 +383,18 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
 - `experiment_id UUID NULL REFERENCES experiments(id) ON DELETE SET NULL`
 - `task_id TEXT UNIQUE NOT NULL`（Celery 任务 ID）
 - `job_type TEXT NOT NULL`（当前为 `"steadydancer_i2v"`）
-- `status TEXT NOT NULL`（Celery 状态）
-- `input_dir TEXT NOT NULL`（Job 级别输入目录）
+- `status TEXT NOT NULL`（Celery 状态 + 少量自定义状态，例如 `EXPIRED`）
+- `input_dir TEXT NOT NULL`（Job 级别输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 - `params JSONB NOT NULL`（请求参数快照）
 - `success BOOLEAN NULL`
-- `result_video_path TEXT NULL`（结果视频规范化路径）
+- `result_video_path TEXT NULL`（结果视频规范化路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）
 - `error_message TEXT NULL`
 - `created_at TIMESTAMPTZ NOT NULL`
 - `updated_at TIMESTAMPTZ NOT NULL`
+- `started_at TIMESTAMPTZ NULL`
 - `finished_at TIMESTAMPTZ NULL`
+- `canceled_at TIMESTAMPTZ NULL`
+- `cancel_reason TEXT NULL`
 
 ---
 
@@ -382,4 +405,3 @@ Job 是一次实际的 SteadyDancer I2V 生成任务。可以直接挂在 Projec
   - 高层架构变化则更新 `docs/architecture.md`。
 - 实际请求 / 返回示例可根据需要扩展到单独的 API 参考文档或 OpenAPI 描述；
   当前版本以文字说明为主，避免与代码重复维护过多样例。
-

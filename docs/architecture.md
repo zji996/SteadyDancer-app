@@ -157,17 +157,17 @@ uv run --project apps/api uvicorn apps.api.main:app --reload
     - 针对 Project / Experiment 下 Job 的创建与状态刷新（包含目录准备、结果视频规范化迁移等）。
 - 持久化层（`apps/api/db.py`）：
   - 基于 SQLAlchemy 2.x + asyncpg：
-    - `Project` ORM：`id`（UUID）、`name`、`description`、`created_at`、`updated_at`；
+    - `Project` ORM：`id`（UUID）、`name`（唯一）、`description`、`created_at`、`updated_at`；
     - `ReferenceAsset` / `MotionAsset`：
-      - `id`（UUID）、`project_id`、`name`、`image_path` / `video_path`、`meta`（JSONB）、时间戳；
+      - `id`（UUID）、`project_id`、`name`、`image_path` / `video_path`（相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`meta`（JSONB）、时间戳；
     - `Experiment`：
       - `id`（UUID）、`project_id`、`reference_id`、`motion_id`、`name`、`description`；
-      - `input_dir`（实验级规范化输入目录）、`config`（JSONB）、时间戳；
+      - `input_dir`（实验级规范化输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`config`（JSONB）、时间戳；
     - `Job`（表名 `generation_jobs`）：
       - `id`（UUID）、`project_id`、`experiment_id`、`task_id`（Celery 任务 ID）、`job_type`；
-      - `status`（Celery 状态）、`input_dir`、`params`（JSONB）；
-      - `success`、`result_video_path`（统一迁移到 Job 的 `output/` 后的路径）、`error_message`；
-      - `created_at`、`updated_at`、`finished_at`。
+      - `status`（Celery 状态 + 少量自定义状态，如 `EXPIRED`）、`input_dir`（Job 级别输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`params`（JSONB）；
+      - `success`、`result_video_path`（统一迁移到 Job 的 `output/` 后的路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`error_message`；
+      - `created_at`、`updated_at`、`started_at`、`finished_at`、`canceled_at`、`cancel_reason`。
   - 暴露 `engine`、`AsyncSessionFactory` 与 `get_session` 作为 FastAPI 依赖。
 
 API 的启动生命周期（`lifespan`）中会在开发环境通过 `init_db()` 调用 `Base.metadata.create_all()` 初始化表结构，生产环境推荐使用独立迁移工具。

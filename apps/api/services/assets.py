@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import MotionAsset, Project, ReferenceAsset
 from apps.api.schemas.assets import MotionAssetCreate, ReferenceAssetCreate
-from libs.py_core.projects import ensure_motion_dirs, ensure_reference_dirs
+from libs.py_core.projects import (
+    ensure_motion_dirs,
+    ensure_reference_dirs,
+    to_data_relative,
+)
 
 
 class ProjectNotFoundError(Exception):
@@ -60,7 +64,7 @@ async def create_reference_asset(
         id=ref_id,
         project_id=project_id,
         name=payload.name,
-        image_path=str(dest),
+        image_path=to_data_relative(dest),
         meta=payload.meta,
     )
     session.add(asset)
@@ -97,7 +101,7 @@ async def create_motion_asset(
         id=motion_id,
         project_id=project_id,
         name=payload.name,
-        video_path=str(dest),
+        video_path=to_data_relative(dest),
         meta=payload.meta,
     )
     session.add(asset)

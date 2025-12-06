@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import json
 from pathlib import Path
 from typing import Any, Tuple
 from uuid import UUID, uuid4
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.db import Experiment, Job, Project, utcnow
 from apps.api.schemas.steadydancer import SteadyDancerJobCreate
 from libs.py_core.celery_client import celery_client
-from libs.py_core.projects import ensure_job_dirs
+from libs.py_core.projects import ensure_job_dirs, from_data_relative, to_data_relative
 
 
 class ProjectNotFoundError(Exception):
@@ -36,7 +37,7 @@ def build_task_payload(payload: SteadyDancerJobCreate, input_dir: Path) -> dict[
     """
     Build the Celery task payload from an API-level request and resolved input_dir.
     """
-    return {
+    data: dict[str, Any] = {
         "input_dir": str(input_dir),
         "prompt_override": payload.prompt_override,
         "size": payload.size,
@@ -47,6 +48,16 @@ def build_task_payload(payload: SteadyDancerJobCreate, input_dir: Path) -> dict[
         "base_seed": payload.base_seed,
         "cuda_visible_devices": payload.cuda_visible_devices,
     }
+    # Optional advanced parameters are only included when explicitly set.
+    if payload.sample_steps is not None:
+        data["sample_steps"] = payload.sample_steps
+    if payload.sample_shift is not None:
+        data["sample_shift"] = payload.sample_shift
+    if payload.sample_solver is not None:
+        data["sample_solver"] = payload.sample_solver
+    if payload.offload_model is not None:
+        data["offload_model"] = payload.offload_model
+    return data
 
 
 def enqueue_steadydancer_task(task_payload: dict[str, Any]) -> str:
@@ -104,7 +115,7 @@ async def create_project_steadydancer_job(
 
     # If an experiment is provided and has a canonical input_dir, prefer it.
     if experiment is not None and experiment.input_dir:
-        source_input_dir = Path(experiment.input_dir)
+        source_input_dir = from_data_relative(experiment.input_dir)
     else:
         source_input_dir = Path(payload.input_dir)
         if not source_input_dir.is_absolute():
@@ -127,6 +138,20 @@ async def create_project_steadydancer_job(
         ) from exc
 
     task_payload = build_task_payload(payload=payload, input_dir=job_paths.input_dir)
+    # Enrich payload with identifiers so the worker can log under the per-job directory.
+    task_payload["project_id"] = str(project_id)
+    task_payload["job_id"] = str(job_id)
+
+    # Persist the task payload to disk for offline debugging.
+    try:
+        config_path = job_paths.job_root / "config.json"
+        config_path.write_text(
+            json.dumps(task_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Best-effort; failures here must not prevent job creation.
+        pass
     task_id = enqueue_steadydancer_task(task_payload=task_payload)
 
     job = Job(
@@ -136,7 +161,7 @@ async def create_project_steadydancer_job(
         task_id=task_id,
         job_type="steadydancer_i2v",
         status="PENDING",
-        input_dir=str(job_paths.input_dir),
+        input_dir=to_data_relative(job_paths.input_dir),
         params=task_payload,
         success=None,
         result_video_path=None,
@@ -169,7 +194,7 @@ async def refresh_project_job_status(
         await session.commit()
         return state, None, error_msg
 
-    # Job finished or in-progress without fatal error.
+        # Job finished or in-progress without fatal error.
     if result is not None:
         job.status = state
 
@@ -177,44 +202,39 @@ async def refresh_project_job_status(
         if "success" in result:
             job.success = bool(result.get("success"))
 
-        # Normalize / move result video into the job's output/ directory.
+        # Normalize the result video path and store it as a data-root-relative path.
         video_path_value = result.get("video_path")
         if video_path_value:
             if job.result_video_path:
                 # We already normalized once; just mirror the stored path back into the result.
-                result["video_path"] = job.result_video_path
+                result["video_path"] = str(from_data_relative(job.result_video_path))
             else:
-                try:
-                    from pathlib import Path
-                    import shutil
+                from pathlib import Path
 
-                    src = Path(str(video_path_value)).expanduser().resolve()
-                    if src.is_file():
-                        from libs.py_core.projects import ensure_job_dirs
-
-                        job_paths = ensure_job_dirs(
-                            project_id=job.project_id,
-                            job_id=job.id,
-                        )
-                        dest = job_paths.output_dir / src.name
-                        if src != dest:
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.move(str(src), str(dest))
-                        # Use the destination path if move succeeded, otherwise fall back.
-                        final_path = str(dest if dest.is_file() else src)
-                        job.result_video_path = final_path
-                        result["video_path"] = final_path
-                    else:
-                        # File not found; still store the original path for debugging.
-                        job.result_video_path = str(src)
-                except Exception:
-                    # Best-effort normalization; on failure we keep Celery's raw path.
-                    job.result_video_path = str(video_path_value)
-        if job.finished_at is None and state in {"SUCCESS", "FAILURE"}:
+                src = Path(str(video_path_value)).expanduser().resolve()
+                if src.is_file():
+                    job.result_video_path = to_data_relative(src)
+                    # For API responses, keep the absolute normalized path.
+                    result["video_path"] = str(src)
+                else:
+                    # File not found; still store the original path for debugging.
+                    job.result_video_path = to_data_relative(str(src))
+        if job.started_at is None and state == "STARTED":
+            job.started_at = utcnow()
+        if job.finished_at is None and state in {"SUCCESS", "FAILURE", "REVOKED"}:
             job.finished_at = utcnow()
     else:
         # Task is pending / started / retrying.
-        job.status = state
+        # If Celery backend has expired the result for a previously finished job,
+        # keep a stable terminal state in our DB.
+        if (
+            job.finished_at is not None
+            and state == "PENDING"
+            and job.status in {"SUCCESS", "FAILURE", "REVOKED"}
+        ):
+            job.status = "EXPIRED"
+        else:
+            job.status = state
 
     await session.commit()
 
@@ -253,3 +273,28 @@ async def list_experiment_jobs(
         .order_by(Job.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def cancel_project_job(
+    session: AsyncSession,
+    job: Job,
+    reason: str | None = None,
+) -> Job:
+    """
+    Cancel a running or pending job via Celery and persist cancellation metadata.
+    """
+    try:
+        # Best-effort revoke; Celery will mark the task as revoked if possible.
+        celery_client.control.revoke(job.task_id, terminate=True)
+    except Exception:
+        # Even if Celery control fails (e.g., broker issues), record the intent locally.
+        pass
+
+    job.status = "REVOKED"
+    job.canceled_at = utcnow()
+    if reason:
+        job.cancel_reason = reason
+
+    await session.commit()
+    await session.refresh(job)
+    return job

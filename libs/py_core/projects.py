@@ -31,6 +31,35 @@ def get_data_root() -> Path:
     return (repo_root / "assets" / "projects").resolve()
 
 
+def to_data_relative(path: Union[Path, str]) -> str:
+    """
+    Convert an absolute path under the data root into a relative path.
+
+    - If `path` is under get_data_root(), return a POSIX-style relative path;
+    - Otherwise, return the original path string unchanged.
+    """
+    base = get_data_root()
+    p = Path(path).expanduser().resolve()
+    try:
+        rel = p.relative_to(base)
+        return rel.as_posix()
+    except ValueError:
+        return str(p)
+
+
+def from_data_relative(path_str: str) -> Path:
+    """
+    Resolve a path string stored in the DB into an absolute filesystem path.
+
+    - If `path_str` is absolute, return it as-is;
+    - Otherwise, treat it as relative to get_data_root().
+    """
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    return (get_data_root() / p).resolve()
+
+
 def get_tmp_root() -> Path:
     """
     Return the root directory for SteadyDancer temporary files.
