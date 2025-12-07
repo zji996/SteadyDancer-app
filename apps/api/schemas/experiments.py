@@ -90,6 +90,34 @@ class ExperimentCreate(BaseModel):
     )
 
 
+class ExperimentPreprocessCreate(BaseModel):
+    """
+    Create an experiment from existing ReferenceAsset + MotionAsset
+    and kick off an asynchronous preprocess pipeline on the worker.
+    """
+
+    name: str = Field(..., description="Human-friendly name of the experiment.")
+    description: str | None = Field(
+        None,
+        description="Optional description of the experiment intent.",
+    )
+    reference_id: UUID = Field(
+        ...,
+        description="Reference asset ID associated with this experiment.",
+    )
+    motion_id: UUID = Field(
+        ...,
+        description="Motion asset ID associated with this experiment.",
+    )
+    config: ExperimentConfig | None = Field(
+        None,
+        description=(
+            "Optional default SteadyDancer configuration for this experiment. "
+            "If prompt_override is set, it will be written into prompt.txt under the experiment input_dir."
+        ),
+    )
+
+
 class ExperimentOut(BaseModel):
     id: UUID
     project_id: UUID
@@ -99,6 +127,13 @@ class ExperimentOut(BaseModel):
     description: str | None = None
     input_dir: str | None = None
     config: dict[str, Any] | None = None
+    preprocess_task_id: str | None = None
 
     class Config:
         from_attributes = True
+
+
+class ExperimentPreprocessCreated(BaseModel):
+    project_id: UUID
+    experiment_id: UUID
+    task_id: str

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import Job, Project, get_session
+from apps.api.errors import api_error
 from apps.api.schemas.assets import (
     MotionAssetCreate,
     MotionAssetOut,
     ReferenceAssetCreate,
     ReferenceAssetOut,
 )
-from apps.api.schemas.experiments import ExperimentCreate, ExperimentOut
+from apps.api.schemas.experiments import (
+    ExperimentCreate,
+    ExperimentOut,
+    ExperimentPreprocessCreate,
+    ExperimentPreprocessCreated,
+)
 from apps.api.schemas.projects import (
     ProjectCreate,
     ProjectJobCancel,
@@ -59,9 +64,10 @@ async def create_project(
             description=payload.description,
         )
     except project_service.ProjectNameAlreadyExistsError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
+            code="PROJECT_NAME_CONFLICT",
+            message=str(exc),
         )
     return project
 
@@ -76,7 +82,11 @@ async def get_project(
     """
     project = await project_service.get_project(session=session, project_id=project_id)
     if project is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     return project
 
 
@@ -103,16 +113,22 @@ async def create_project_steadydancer_job(
             payload=payload,
         )
     except job_service.ProjectNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     except job_service.InputDirNotFoundError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            code="INPUT_DIR_NOT_FOUND",
+            message=str(exc),
         )
     except job_service.JobPreparationError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
+            code="JOB_PREPARATION_FAILED",
+            message=str(exc),
         )
 
     return ProjectJobCreated(project_id=project_id, job_id=job.id, task_id=job.task_id)
@@ -134,14 +150,24 @@ async def get_project_steadydancer_job_status(
     """
     job = await session.get(Job, job_id)
     if job is None or job.project_id != project_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="JOB_NOT_FOUND",
+            message="Job not found.",
+        )
 
     state, result, error = await job_service.refresh_project_job_status(session=session, job=job)
 
     if error is not None:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"task_id": job.task_id, "state": state, "error": error},
+            code="CELERY_TASK_ERROR",
+            message="Celery task failed.",
+            extra={
+                "task_id": job.task_id,
+                "state": state,
+                "error": error,
+            },
         )
 
     return ProjectJobStatus(
@@ -171,7 +197,11 @@ async def cancel_project_steadydancer_job(
     """
     job = await session.get(Job, job_id)
     if job is None or job.project_id != project_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="JOB_NOT_FOUND",
+            message="Job not found.",
+        )
 
     job = await job_service.cancel_project_job(
         session=session,
@@ -205,19 +235,25 @@ async def download_project_steadydancer_job_video(
     """
     job = await session.get(Job, job_id)
     if job is None or job.project_id != project_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="JOB_NOT_FOUND",
+            message="Job not found.",
+        )
 
     if not job.success or not job.result_video_path:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job has no completed result video.",
+            code="JOB_NO_VIDEO_RESULT",
+            message="Job has no completed result video.",
         )
 
     path = from_data_relative(job.result_video_path)
     if not path.is_file():
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Result video file not found on disk.",
+            code="RESULT_FILE_NOT_FOUND",
+            message="Result video file not found on disk.",
         )
 
     return FileResponse(
@@ -262,11 +298,16 @@ async def create_reference_asset(
             payload=payload,
         )
     except asset_service.ProjectNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     except asset_service.SourceFileNotFoundError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            code="SOURCE_FILE_NOT_FOUND",
+            message=str(exc),
         )
 
     return ReferenceAssetOut.model_validate(asset)
@@ -308,7 +349,11 @@ async def get_reference_asset(
         asset_id=ref_id,
     )
     if asset is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reference asset not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="REFERENCE_ASSET_NOT_FOUND",
+            message="Reference asset not found.",
+        )
     return ReferenceAssetOut.model_validate(asset)
 
 
@@ -334,11 +379,16 @@ async def create_motion_asset(
             payload=payload,
         )
     except asset_service.ProjectNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     except asset_service.SourceFileNotFoundError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            code="SOURCE_FILE_NOT_FOUND",
+            message=str(exc),
         )
 
     return MotionAssetOut.model_validate(asset)
@@ -380,7 +430,11 @@ async def get_motion_asset(
         asset_id=motion_id,
     )
     if asset is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Motion asset not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="MOTION_ASSET_NOT_FOUND",
+            message="Motion asset not found.",
+        )
     return MotionAssetOut.model_validate(asset)
 
 
@@ -407,13 +461,68 @@ async def create_experiment(
             payload=payload,
         )
     except experiment_service.ProjectNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     except experiment_service.AssetNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise api_error(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="ASSET_NOT_FOUND",
+            message=str(exc),
+        )
     except experiment_service.SourceInputDirNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise api_error(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="SOURCE_INPUT_DIR_NOT_FOUND",
+            message=str(exc),
+        )
 
     return ExperimentOut.model_validate(exp)
+
+
+@router.post(
+    "/{project_id}/experiments/preprocess",
+    response_model=ExperimentPreprocessCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_experiment_with_preprocess(
+    project_id: UUID,
+    payload: ExperimentPreprocessCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ExperimentPreprocessCreated:
+    """
+    Create an experiment from existing ReferenceAsset + MotionAsset
+    and kick off a SteadyDancer preprocess pipeline on the worker.
+
+    The experiment row is created immediately, while the heavy preprocessing
+    runs asynchronously via Celery.
+    """
+    try:
+        exp, task_id = await experiment_service.create_experiment_with_preprocess(
+            session=session,
+            project_id=project_id,
+            payload=payload,
+        )
+    except experiment_service.ProjectNotFoundError:
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
+    except experiment_service.AssetNotFoundError as exc:
+        raise api_error(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="ASSET_NOT_FOUND",
+            message=str(exc),
+        )
+
+    return ExperimentPreprocessCreated(
+        project_id=project_id,
+        experiment_id=exp.id,
+        task_id=task_id,
+    )
 
 
 @router.get(
@@ -452,7 +561,11 @@ async def get_experiment(
         experiment_id=experiment_id,
     )
     if exp is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experiment not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="EXPERIMENT_NOT_FOUND",
+            message="Experiment not found.",
+        )
     return ExperimentOut.model_validate(exp)
 
 
@@ -479,7 +592,11 @@ async def create_experiment_steadydancer_job(
         experiment_id=experiment_id,
     )
     if exp is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Experiment not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="EXPERIMENT_NOT_FOUND",
+            message="Experiment not found.",
+        )
 
     try:
         job = await job_service.create_project_steadydancer_job(
@@ -489,16 +606,22 @@ async def create_experiment_steadydancer_job(
             experiment=exp,
         )
     except job_service.ProjectNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        raise api_error(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code="PROJECT_NOT_FOUND",
+            message="Project not found.",
+        )
     except job_service.InputDirNotFoundError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            code="INPUT_DIR_NOT_FOUND",
+            message=str(exc),
         )
     except job_service.JobPreparationError as exc:
-        raise HTTPException(
+        raise api_error(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc),
+            code="JOB_PREPARATION_FAILED",
+            message=str(exc),
         )
 
     return ProjectJobCreated(project_id=project_id, job_id=job.id, task_id=job.task_id)

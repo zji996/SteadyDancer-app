@@ -74,6 +74,8 @@ SteadyDancer 适配约定（当前设计）：
 uv run --project apps/api uvicorn apps.api.main:app --reload
 ```
 
+> 更详细的 HTTP 接口定义、认证与错误码约定，请参考应用本地文档 `apps/api/README.md`。
+
 #### 3.1.1 项目（Project）与任务（Job）分层
 
 为了方便长期管理生成记录与文件，API 引入了「项目（Project）+ 任务（Job）」的抽象：
@@ -119,7 +121,7 @@ uv run --project apps/api uvicorn apps.api.main:app --reload
 - 创建实验：
   - `POST /projects/{project_id}/experiments`：
     - 指定 `reference_id` / `motion_id`；
-    - 指定 `source_input_dir`（已有的 SteadyDancer 预处理目录）；
+    - 指定 `source_input_dir`（已有的 SteadyDancer 预处理目录，兼容上游脚本生成的 pair_dir）；
     - 可选传入一份默认的 SteadyDancer 配置（尺寸、帧数、seed 等），作为 `config` 存储。
   - API 会将 `source_input_dir` 拷贝到：
 
@@ -128,6 +130,10 @@ uv run --project apps/api uvicorn apps.api.main:app --reload
     ```
 
     并在 DB 的 `experiments.input_dir` 中记录这一「规范化输入目录」。
+  - `POST /projects/{project_id}/experiments/preprocess`：
+    - 指定 `reference_id` / `motion_id` 与实验配置 `config`；
+    - 由 API 创建 Experiment 记录并调用 worker 侧 Celery 任务 `steadydancer.preprocess.experiment`，以当前 Project 下的 `ReferenceAsset` / `MotionAsset` 为输入，在实验目录下生成规范化 pair_dir（`ref_image.png`、`driving_video.mp4`、`positive/`、`negative/` 等）；
+    - 若 `config.prompt_override` 不为空，会写入 `prompt.txt`。
 - 从实验创建 Job：
   - `POST /projects/{project_id}/experiments/{experiment_id}/steadydancer/jobs`：
     - 默认使用 Experiment 的 `input_dir` 作为 Job 的输入源；
@@ -162,7 +168,7 @@ uv run --project apps/api uvicorn apps.api.main:app --reload
       - `id`（UUID）、`project_id`、`name`、`image_path` / `video_path`（相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`meta`（JSONB）、时间戳；
     - `Experiment`：
       - `id`（UUID）、`project_id`、`reference_id`、`motion_id`、`name`、`description`；
-      - `input_dir`（实验级规范化输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`config`（JSONB）、时间戳；
+      - `input_dir`（实验级规范化输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`config`（JSONB）、`preprocess_task_id?`、时间戳；
     - `Job`（表名 `generation_jobs`）：
       - `id`（UUID）、`project_id`、`experiment_id`、`task_id`（Celery 任务 ID）、`job_type`；
       - `status`（Celery 状态 + 少量自定义状态，如 `EXPIRED`）、`input_dir`（Job 级别输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`params`（JSONB）；
@@ -185,9 +191,10 @@ uv run --project apps/worker celery -A apps.worker.celery_app worker -l info
 
 - 配置：
   - `CELERY_BROKER_URL`、`CELERY_RESULT_BACKEND`、`CELERY_DEFAULT_QUEUE`、`WORKER_CONCURRENCY` 等环境变量在 `apps/worker/.env.example` 中示例。
-- 示例任务：
-  - `worker.health_check`：用于验证 worker 与 broker 的连通性，并返回解析到的 `MODELS_DIR`。
-  - `steadydancer.generate.i2v`：从预处理好的输入目录调用 SteadyDancer CLI 生成视频。
+  - 示例任务：
+    - `worker.health_check`：用于验证 worker 与 broker 的连通性，并返回解析到的 `MODELS_DIR`。
+    - `steadydancer.preprocess.experiment`：从 ReferenceAsset / MotionAsset 读取图像与视频，调用上游 SteadyDancer 预处理脚本生成规范化 pair_dir。
+    - `steadydancer.generate.i2v`：从预处理好的输入目录调用 SteadyDancer DF11 / BF16 CLI 或 Wan API 生成视频。
 
 未来可以在 `apps/worker` 中扩展实际的推理任务，逻辑实现放在 `libs/py_core`。
 

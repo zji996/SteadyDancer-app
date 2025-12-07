@@ -13,6 +13,7 @@ from apps.api.schemas.assets import MotionAssetCreate, ReferenceAssetCreate
 from libs.py_core.projects import (
     ensure_motion_dirs,
     ensure_reference_dirs,
+    resolve_repo_relative,
     to_data_relative,
 )
 
@@ -30,10 +31,7 @@ class SourceFileNotFoundError(Exception):
 
 
 def _resolve_source_path(src: str) -> Path:
-    path = Path(src)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path
+    return resolve_repo_relative(src)
 
 
 async def create_reference_asset(

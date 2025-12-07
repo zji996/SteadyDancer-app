@@ -224,6 +224,10 @@ class Experiment(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     input_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    preprocess_task_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.db import Experiment, Job, Project, utcnow
 from apps.api.schemas.steadydancer import SteadyDancerJobCreate
 from libs.py_core.celery_client import celery_client
-from libs.py_core.projects import ensure_job_dirs, from_data_relative, to_data_relative
+from libs.py_core.projects import (
+    ensure_job_dirs,
+    from_data_relative,
+    resolve_repo_relative,
+    to_data_relative,
+)
 
 
 class ProjectNotFoundError(Exception):
@@ -117,9 +122,7 @@ async def create_project_steadydancer_job(
     if experiment is not None and experiment.input_dir:
         source_input_dir = from_data_relative(experiment.input_dir)
     else:
-        source_input_dir = Path(payload.input_dir)
-        if not source_input_dir.is_absolute():
-            source_input_dir = Path.cwd() / source_input_dir
+        source_input_dir = resolve_repo_relative(payload.input_dir)
 
     if not source_input_dir.is_dir():
         raise InputDirNotFoundError(

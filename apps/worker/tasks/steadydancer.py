@@ -8,7 +8,11 @@ from libs.py_core.models.steadydancer_cli import (
     SteadyDancerI2VRequest,
     run_i2v_generation,
 )
-from libs.py_core.projects import ensure_job_dirs
+from libs.py_core.models.steadydancer_preprocess import (
+    SteadyDancerPreprocessRequest,
+    run_preprocess_pipeline,
+)
+from libs.py_core.projects import ensure_experiment_dirs, ensure_job_dirs
 import json
 
 
@@ -97,4 +101,40 @@ def generate_i2v_task(payload: dict[str, Any]) -> dict[str, Any]:
             # Logging is best-effort and must never break task execution.
             pass
 
+    return result.to_dict()
+
+
+@celery_app.task(name="steadydancer.preprocess.experiment")
+def preprocess_experiment_task(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Celery task wrapper for SteadyDancer preprocess pipeline.
+
+    Expected payload:
+    - project_id: str (UUID)
+    - experiment_id: str (UUID)
+    - reference_image_path: str
+    - motion_video_path: str
+    - prompt: Optional[str]
+    """
+    project_id = payload["project_id"]
+    experiment_id = payload["experiment_id"]
+
+    ref_image_path = Path(payload["reference_image_path"])
+    motion_video_path = Path(payload["motion_video_path"])
+    prompt = payload.get("prompt")
+
+    # Ensure experiment dirs exist and compute the canonical input_dir.
+    exp_paths = ensure_experiment_dirs(
+        project_id=project_id,
+        experiment_id=experiment_id,
+    )
+
+    req = SteadyDancerPreprocessRequest(
+        ref_image=ref_image_path,
+        driving_video=motion_video_path,
+        output_dir=exp_paths.input_dir,
+        prompt=prompt,
+    )
+
+    result = run_preprocess_pipeline(req)
     return result.to_dict()

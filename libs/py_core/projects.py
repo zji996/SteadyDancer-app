@@ -16,6 +16,13 @@ def _get_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def get_repo_root() -> Path:
+    """
+    Public helper to return the repository root directory.
+    """
+    return _get_repo_root()
+
+
 def get_data_root() -> Path:
     """
     Return the root directory for SteadyDancer project/job data.
@@ -29,6 +36,21 @@ def get_data_root() -> Path:
 
     repo_root = _get_repo_root()
     return (repo_root / "assets" / "projects").resolve()
+
+
+def resolve_repo_relative(path: Union[Path, str]) -> Path:
+    """
+    Resolve a path that is documented as "absolute or repo-root-relative".
+
+    - If `path` is absolute, return it as-is (expanded & resolved);
+    - Otherwise, treat it as relative to the repository root.
+    """
+    p = Path(path)
+    if p.is_absolute():
+        return p.expanduser().resolve()
+
+    base = _get_repo_root()
+    return (base / p).expanduser().resolve()
 
 
 def to_data_relative(path: Union[Path, str]) -> str:
