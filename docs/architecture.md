@@ -15,9 +15,9 @@
   - `infra/docker-compose.dev.yml`：本地 Postgres / Redis 等。
   - `infra/docker/`：API / Worker 的 Dockerfile。
 - `scripts/`：开发与运维脚本。
-  - `scripts/dev_up.sh` / `dev_down.sh`：本地依赖服务的启动 / 停止。
-  - `scripts/dev_api.sh`：启动 API 服务。
-  - `scripts/dev_worker.sh`：启动 Worker。
+  - `scripts/dev_up.sh` / `dev_down.sh`：一键启动 / 停止本地依赖 + API + Worker + Web，并将日志写入仓库根目录下的 `log/`。
+  - `scripts/dev_api.sh`：仅启动 API 服务（前台），供按需单独调试使用。
+  - `scripts/dev_worker.sh`：仅启动 Worker（前台），供按需单独调试使用。
   - `scripts/download_models.py`：模型下载与准备入口（支持 ModelScope / HuggingFace）。
 - `models/`：模型权重与运行时数据（仅本地存在，不提交到 Git）。
 - `third_party/`：上游仓库 Git submodule，仅作参考。
@@ -295,7 +295,21 @@ API 在创建 Experiment / Job 时会调用这些工具函数，确保文件布�
 
 ## 7. 运行方式与环境
 
-- 推荐在仓库根目录执行所有 Python 相关命令，并指定 `--project`：
+- 推荐在仓库根目录执行所有 Python 相关命令，并指定 `--project`。
+- 一键启动 / 停止本地开发环境（包含 Postgres / Redis 依赖、API、Worker、Web）：
+
+  ```bash
+  # 启动全部服务，并将日志写入仓库根目录下 log/ 目录
+  scripts/dev_up.sh
+
+  # 停止全部服务（包括通过 dev_up.sh 启动的 API / Worker / Web 和 docker-compose 依赖）
+  scripts/dev_down.sh
+  ```
+
+  - `dev_up.sh` 会在启动前调用 `dev_down.sh` 清理旧进程，并清空 `log/*.log`；
+  - API 日志写入 `log/api.log`，Worker 日志写入 `log/worker.log`，Web 日志写入 `log/web.log`。
+- 如需分别单独调试 API / Worker，也可以直接运行底层命令：
+
   - API：
 
     ```bash
@@ -307,12 +321,6 @@ API 在创建 Experiment / Job 时会调用这些工具函数，确保文件布�
     ```bash
     uv run --project apps/worker celery -A apps.worker.celery_app worker -l info
     ```
-
-- 本地依赖服务：
-
-  ```bash
-  docker compose -f infra/docker-compose.dev.yml up -d
-  ```
 
 - 所有配置通过 `.env` / `.env.example` 管理，实际 `.env` 文件不提交到 Git。
 

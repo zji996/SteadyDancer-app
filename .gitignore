@@ -33,3 +33,5 @@ models/
 # UV / tooling
 .python-version
 
+# Local logs
+log/

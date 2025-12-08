@@ -114,58 +114,82 @@ uv run --project apps/api python scripts/download_models.py --source huggingface
 
 ## 4. 启动本地依赖与服务
 
-### 4.1 启动 Postgres / Redis
+### 4.1 准备各服务的环境变量
 
-使用仓库内统一的 docker-compose 文件：
+首次启动前，建议先为 API / Worker / Web 准备 `.env` 文件（可根据实际需要调整）：
 
 ```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/worker/.env.example apps/worker/.env
+cp apps/web/.env.example apps/web/.env
+```
+
+### 4.2 一键启动 / 停止（推荐）
+
+使用仓库内统一的一键脚本：
+
+```bash
+# 在仓库根目录
 scripts/dev_up.sh
 ```
 
-这会根据 `infra/docker-compose.dev.yml` 启动本地依赖服务（Postgres / Redis 等），
-用于 API / Worker 的数据库与队列。详细角色说明见 `docs/architecture.md` 与接口文档。
+该脚本会：
 
-如需停止：
+- 调用 `scripts/dev_down.sh` 清理已存在的本地开发进程；
+- 清空并准备仓库根目录下的 `log/` 目录（`log/*.log`）；
+- 根据 `infra/docker-compose.dev.yml` 启动本地依赖（Postgres / Redis 等）；
+- 后台启动：
+  - API（日志写入 `log/api.log`）；
+  - Worker（日志写入 `log/worker.log`）；
+  - Web 前端（日志写入 `log/web.log`）。
+
+停止所有本地服务（包含依赖 + API + Worker + Web）：
 
 ```bash
 scripts/dev_down.sh
 ```
 
-### 4.2 启动 Celery Worker
-
-复制环境示例并启动：
+你可以通过以下方式查看日志（示例）：
 
 ```bash
-cp apps/worker/.env.example apps/worker/.env
-
-scripts/dev_worker.sh
+tail -f log/api.log
+tail -f log/worker.log
+tail -f log/web.log
 ```
 
-Worker 会：
+### 4.3 按需单独启动（可选）
 
-- 连接 Redis 作为 Celery broker/backend；
-- 使用 `STEADYDANCER_CKPT_DIR` / `MODELS_DIR` 加载 SteadyDancer 权重；
-- 暴露任务：
-  - `worker.health_check`
-  - `steadydancer.generate.i2v`
+如需单独调试某个服务，也可以直接使用底层脚本或命令：
 
-### 4.3 启动 API
+- 仅启动 Worker：
 
-同样复制环境示例并启动：
+  ```bash
+  scripts/dev_worker.sh
+  ```
 
-```bash
-cp apps/api/.env.example apps/api/.env
+  或等价的底层命令：
 
-scripts/dev_api.sh
-```
+  ```bash
+  uv run --project apps/worker celery -A apps.worker.celery_app worker -l info
+  ```
 
-API 默认监听 `http://0.0.0.0:8000`，具体接口与返回结构见专门的接口文档。
+- 仅启动 API：
+
+  ```bash
+  scripts/dev_api.sh
+  ```
+
+  或：
+
+  ```bash
+  uv run --project apps/api uvicorn apps.api.main:app --reload
+  ```
 
 ---
 
 ## 5. 前端（可选）
 
-前端位于 `apps/web`，用于构建简单的 Web 控制台。
+前端位于 `apps/web`，用于构建简单的 Web 控制台。如果你已经通过 `scripts/dev_up.sh` 启动环境，则 Web 已经由脚本自动启动；也可以按需单独调试：
 
 ```bash
 npm install
