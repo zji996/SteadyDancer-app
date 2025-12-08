@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+/* Custom theme configuration */
+@theme {
+  /* Color palette - Modern dark theme with vibrant accents */
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #b9e5fe;
+  --color-primary-300: #7cd3fd;
+  --color-primary-400: #36bffa;
+  --color-primary-500: #0ca5eb;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
+
+  --color-accent-400: #a78bfa;
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+
+  --color-success-500: #22c55e;
+  --color-warning-500: #f59e0b;
+  --color-error-500: #ef4444;
+
+  /* Dark mode background colors */
+  --color-surface-50: #18181b;
+  --color-surface-100: #1f1f23;
+  --color-surface-200: #27272a;
+  --color-surface-300: #3f3f46;
+  --color-surface-400: #52525b;
+
+  /* Animation durations */
+  --animate-duration-fast: 150ms;
+  --animate-duration-normal: 300ms;
+}
+
+/* Base styles */
+body {
+  @apply bg-surface-50 text-gray-100 antialiased;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+}
+
+/* Custom utility classes */
+@layer utilities {
+  .glass {
+    @apply bg-surface-100/80 backdrop-blur-xl border border-white/10;
+  }
+
+  .glass-hover {
+    @apply hover:bg-surface-200/80 hover:border-white/20 transition-all duration-150;
+  }
+
+  .gradient-primary {
+    @apply bg-gradient-to-r from-primary-500 to-accent-500;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-400 to-accent-400 bg-clip-text text-transparent;
+  }
+}

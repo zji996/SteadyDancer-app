@@ -2,6 +2,7 @@
   "name": "@steadydancer/web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -9,9 +10,12 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@steadydancer/ts-ui": "0.1.0",
+    "@steadydancer/ts-ui": "workspace:*",
+    "@tailwindcss/vite": "^4.1.17",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.10.1",
+    "tailwindcss": "^4.1.17"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
@@ -22,4 +26,3 @@
     "vite": "^5.4.0"
   }
 }
-
