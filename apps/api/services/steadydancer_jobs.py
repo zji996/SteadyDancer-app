@@ -18,6 +18,7 @@ from libs.py_core.projects import (
     resolve_repo_relative,
     to_data_relative,
 )
+from libs.py_core.s3_storage import is_s3_enabled, upload_file_to_s3
 
 
 class ProjectNotFoundError(Exception):
@@ -197,7 +198,6 @@ async def refresh_project_job_status(
         await session.commit()
         return state, None, error_msg
 
-        # Job finished or in-progress without fatal error.
     if result is not None:
         job.status = state
 
@@ -209,16 +209,33 @@ async def refresh_project_job_status(
         video_path_value = result.get("video_path")
         if video_path_value:
             if job.result_video_path:
-                # We already normalized once; just mirror the stored path back into the result.
-                result["video_path"] = str(from_data_relative(job.result_video_path))
+                # We already normalized once; mirror stored location back into the result.
+                stored = job.result_video_path
+                if stored.startswith("s3://"):
+                    result["video_path"] = stored
+                else:
+                    result["video_path"] = str(from_data_relative(stored))
             else:
                 from pathlib import Path
 
                 src = Path(str(video_path_value)).expanduser().resolve()
                 if src.is_file():
-                    job.result_video_path = to_data_relative(src)
-                    # For API responses, keep the absolute normalized path.
-                    result["video_path"] = str(src)
+                    # When S3 is configured, prefer uploading the result video
+                    # to object storage and storing the s3:// URL in the DB.
+                    if is_s3_enabled():
+                        try:
+                            key = f"projects/{job.project_id}/jobs/{job.id}/output/{src.name}"
+                            s3_url = upload_file_to_s3(src, key)
+                            job.result_video_path = s3_url
+                            result["video_path"] = s3_url
+                        except Exception:
+                            # Best-effort: fall back to local data-root-relative path.
+                            job.result_video_path = to_data_relative(src)
+                            result["video_path"] = str(src)
+                    else:
+                        job.result_video_path = to_data_relative(src)
+                        # For API responses, keep the absolute normalized path.
+                        result["video_path"] = str(src)
                 else:
                     # File not found; still store the original path for debugging.
                     job.result_video_path = to_data_relative(str(src))

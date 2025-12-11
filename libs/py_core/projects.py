@@ -27,15 +27,17 @@ def get_data_root() -> Path:
     """
     Return the root directory for SteadyDancer project/job data.
 
+    Priority (for backward compatibility and new DATA_DIR convention):
     - If STEADYDANCER_DATA_DIR is set, use it as-is;
-    - Otherwise, default to <repo_root>/assets/projects.
+    - Else if DATA_DIR is set, use it as-is;
+    - Otherwise, default to <repo_root>/data.
     """
-    env_value = os.getenv("STEADYDANCER_DATA_DIR")
+    env_value = os.getenv("STEADYDANCER_DATA_DIR") or os.getenv("DATA_DIR")
     if env_value:
         return Path(env_value).expanduser().resolve()
 
     repo_root = _get_repo_root()
-    return (repo_root / "assets" / "projects").resolve()
+    return (repo_root / "data").resolve()
 
 
 def resolve_repo_relative(path: Union[Path, str]) -> Path:

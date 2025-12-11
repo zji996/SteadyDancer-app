@@ -115,7 +115,7 @@ scripts/dev_api.sh
   - `POST /projects`：创建项目；
   - `POST /projects/{project_id}/steadydancer/jobs`：在项目下创建一次 SteadyDancer 生成任务；
   - `GET /projects/{project_id}/steadydancer/jobs/{job_id}`：查询任务状态与结果。
-- 文件按项目与 Job 组织在 `STEADYDANCER_DATA_DIR`（默认为 `<repo_root>/assets/projects`）下：
+- 文件按项目与 Job 组织在 `STEADYDANCER_DATA_DIR`（若未设置则回退到 `DATA_DIR`，再回退到 `<repo_root>/data`）下：
   - `projects/{project_id}/jobs/{job_id}/input/`：本次 Job 的输入（预处理后的 ref_image.png、positive/negative 等）；
   - `projects/{project_id}/jobs/{job_id}/output/`：生成的视频等结果文件；
   - `projects/{project_id}/jobs/{job_id}/tmp/`：中间临时文件，按需清理。

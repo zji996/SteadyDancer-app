@@ -35,3 +35,8 @@ models/
 
 # Local logs
 log/
+logs/
+
+# Runtime data (projects / jobs)
+data/
+assets/projects/

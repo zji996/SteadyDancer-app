@@ -345,7 +345,7 @@ uv run --project apps/worker python scripts/compress_steadydancer_dfloat11.py \
   - 否则仍走原始的 `generate_dancer.py` BF16 CLI 路径。
 - 路径约定：
   - `STEADYDANCER_CKPT_DIR`：指向原始 BF16 目录（默认 `<MODELS_DIR>/SteadyDancer-14B`），用于加载 VAE / T5 / CLIP 等组件；
-  - `STEADYDANCER_DF11_DIR`：可选，默认 `<STEADYDANCER_CKPT_DIR>-df11`，即 `models/SteadyDancer-14B-df11`。
+  - `STEADYDANCER_DF11_DIR`：可选，默认 `<MODELS_DIR>/SteadyDancer-14B-df11`，即 `models/SteadyDancer-14B-df11`，与离线压缩脚本的默认输出目录保持一致。
 - 显存策略：
   - `STEADYDANCER_DF11_CPU_OFFLOAD=1`（默认）时，DF11 权重常驻 CPU，仅在前向时按块解码到 GPU，适合 3080 等显存较小的卡；
   - `STEADYDANCER_DF11_DEVICE_MAP_AUTO=1`（实验性）时，DF11 主干会通过 Accelerate 的 `device_map=\"auto\"` 自动切分到多张 GPU 上，适合双 3080 等多卡环境，出现问题可关闭回退到单卡。

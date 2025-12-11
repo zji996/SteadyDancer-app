@@ -172,7 +172,7 @@ uv run --project apps/api uvicorn apps.api.main:app --reload
     - `Job`（表名 `generation_jobs`）：
       - `id`（UUID）、`project_id`、`experiment_id`、`task_id`（Celery 任务 ID）、`job_type`；
       - `status`（Celery 状态 + 少量自定义状态，如 `EXPIRED`）、`input_dir`（Job 级别输入目录，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`params`（JSONB）；
-      - `success`、`result_video_path`（统一迁移到 Job 的 `output/` 后的路径，相对于 `STEADYDANCER_DATA_DIR` 的相对路径）、`error_message`；
+      - `success`、`result_video_path`（推理结果视频的持久化位置：在启用 S3 时为 `s3://bucket/key` URL，否则为 Job `output/` 下、相对于数据根目录的相对路径）、`error_message`；
       - `created_at`、`updated_at`、`started_at`、`finished_at`、`canceled_at`、`cancel_reason`。
   - 暴露 `engine`、`AsyncSessionFactory` 与 `get_session` 作为 FastAPI 依赖。
 
@@ -240,11 +240,13 @@ npm run web:dev
 
 ### 6.1 项目 / 资产 / 实验 / Job 数据目录适配（libs/py_core/projects.py）
 
-与模型目录解耦，项目及其资产 / 实验 / Job 的业务数据统一放在 `STEADYDANCER_DATA_DIR` 下，由 `libs.py_core.projects` 提供路径计算：
+与模型目录解耦，项目及其资产 / 实验 / Job 的业务数据统一放在 SteadyDancer 的数据根目录下，由 `libs.py_core.projects` 提供路径计算：
 
 - 根目录：
-  - `STEADYDANCER_DATA_DIR`（可配置环境变量），默认：`<repo_root>/assets/projects`；
-  - `STEADYDANCER_TMP_DIR`（可选），默认：`<STEADYDANCER_DATA_DIR>/tmp`。
+  - 首先读取 `STEADYDANCER_DATA_DIR`（如未设置则回退到 `DATA_DIR`）；
+  - 若两者都未设置，则默认使用 `<repo_root>/data` 作为数据根目录；
+  - 在启用 S3 时，`STEADYDANCER_DATA_DIR` / `DATA_DIR` 主要用于临时中转与缓存，持久化文件通过 S3 存储；
+  - 临时目录根：`STEADYDANCER_TMP_DIR`（可选），默认：`<data_root>/tmp`。
 - 单个 Project：
 
   ```text
@@ -280,7 +282,7 @@ npm run web:dev
   ```text
   <STEADYDANCER_DATA_DIR>/projects/{project_id}/jobs/{job_id}/
     input/   # 本 Job 的输入（从 Experiment.input 或用户传入目录拷贝）
-    output/  # 推理生成的视频等结果（API 在任务完成后会将结果视频规范化移动到该目录）
+    output/  # 推理生成的视频等结果（Worker 在本地写入后，API 会在有 S3 配置时将结果上传到对象存储）
     tmp/     # 中间临时文件（一次性缓存，可按策略清理）
     logs/    # 可选：stdout/stderr 等日志落地
   ```

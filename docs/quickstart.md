@@ -88,6 +88,8 @@ cp .env.example .env
 
 - `MODELS_DIR`（默认 `./models`）
 - `STEADYDANCER_CKPT_DIR`（可留空，默认 `<MODELS_DIR>/SteadyDancer-14B`）
+- `STEADYDANCER_DF11_DIR`（可留空，默认 `<MODELS_DIR>/SteadyDancer-14B-df11`，与 DF11 压缩脚本输出目录一致）
+- `DATA_DIR`（可留空，默认 `<repo_root>/data`，作为 SteadyDancer 运行时业务数据的根目录）
 
 ### 3.2 使用脚本下载模型
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import Job, Project, get_session
@@ -34,6 +34,7 @@ from apps.api.services import experiments as experiment_service
 from apps.api.services import projects as project_service
 from apps.api.services import steadydancer_jobs as job_service
 from libs.py_core.projects import from_data_relative
+from libs.py_core.s3_storage import generate_presigned_get_url
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -248,7 +249,22 @@ async def download_project_steadydancer_job_video(
             message="Job has no completed result video.",
         )
 
-    path = from_data_relative(job.result_video_path)
+    location = job.result_video_path
+
+    # When job result points to S3, issue a redirect to a presigned URL
+    # so the client can download directly from object storage.
+    if location.startswith("s3://"):
+        try:
+            url = generate_presigned_get_url(location)
+        except Exception as exc:
+            raise api_error(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                code="S3_DOWNLOAD_ERROR",
+                message=f"Failed to generate download URL: {exc}",
+            )
+        return RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    path = from_data_relative(location)
     if not path.is_file():
         raise api_error(
             status_code=status.HTTP_404_NOT_FOUND,
